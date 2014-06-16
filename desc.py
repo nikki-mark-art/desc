@@ -140,13 +140,11 @@ class LocalMessages(set):
 def init_logs():
     """ Initiates local message logging """
 
-    # logging.basicConfig(format='[%(asctime)s][%(levelname)s] %(message)s',
-    #                     datefmt='%m/%d/%Y %I:%M:%S %p', filename=Settings.app_home +
-    #                     os.path.sep + sys.argv[0] + '.log' +
-    #                     filemode='a', level=logging.DEBUG)
+    logging.basicConfig(format='[%(asctime)s][%(levelname)s] %(message)s',
+                        datefmt='%m/%d/%Y %I:%M:%S %p', filename=sys.argv[0] + '.log',
+                        filemode='w+', level=logging.DEBUG)
     
-    #logging.basicConfig(level=logging.DEBUG)
-
+    # logging.basicConfig(level=logging.DEBUG)
     logging.info("-" * 8 + " Logging started " + "-" * 8)
     logging.debug("Self-test: this is a debug level messsage")
     logging.info("Self-test: this is an informational message")
@@ -240,7 +238,9 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
         # Whether to print the output from `ls`
         matched = False
 
-        logging.debug("Hashes parsed: ", hashes_parsed)
+        # This logging below might fail and produce a
+        # large traceback log
+        #logging.debug("Hashes parsed: ", hashes_parsed)
 
         # Save cycles on comparing
         if hashes_parsed >= hashes_len:
