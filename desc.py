@@ -109,7 +109,6 @@ class FileRecord(object):
         # Get a SHA512 hash of the path
         self.file_hash = hashlib.sha512(file_path.encode('UTF-8')).hexdigest()
 
-        # Debug
         logging.debug("{0}, {1}, {2}".format(self.file_path, self.file_hash,
                                              self.file_desc))
 
@@ -118,9 +117,8 @@ class FileRecord(object):
 
 
 class LocalMessages(set):
-    """ All predefined error codes and descriptions """
+    """ All predefined errors, warnings, etc. """
 
-    # Errors themeselves
     NO_PATH = u"No such file or directory. A typo?"
     NO_FILENAME = u"Can't create a record for file without a path."
     BAD_PARAMS = u"Incorrect parameter(s) passed in."
@@ -255,6 +253,7 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
             if not item:
                 continue
 
+            # File name from the DB/hashes
             file_name = item['path'].split(os.path.sep)[-1:][0]
 
             logging.debug("Looking for {} in {}".format(file_name, line))
@@ -285,7 +284,7 @@ def get_descriptions(folder=os.getcwd()):
     hashes = []
     folder = os.path.realpath(folder)
 
-    # Files in the current folder
+    # Files in the folder
     dir_files = os.listdir(folder)
 
     # Get description for each file in the dir
