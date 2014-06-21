@@ -9,18 +9,31 @@ import sqlite3
 import re
 
 
+class Colors:
+    """ Terminal colors for a nicer output """
+
+    BOLD = "\033[1m"
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+
+
 class Settings:
     """ Place all global objects here, including settings et al """
 
     list_command = 'ls'
     list_command_opts = '-lah'
-    custom_format = ' => '
+    custom_format_begin = ' => ' + Colors.BLUE
+    custom_format_end = Colors.ENDC
     app_home = os.path.realpath(os.environ['HOME'] + os.path.sep +
                                 '.desc' + os.path.sep)
 
     db_uri = app_home + os.path.sep + '.db'  # where to store the DB
     cursor = None  # internal use, overwritten
-    db_conn = None  # also internal    
+    db_conn = None  # also internal
 
     def __getattr__(self, attribute_name):
         if attribute_name in self:
@@ -53,9 +66,15 @@ def get_existing(file_path, file_hash=None):
     else:
         logging.debug("Looking for record by path {0}".format(file_path))
 
-        rec = Settings.cursor.execute('''SELECT D.hash AS hash, D.desc 
-                    AS description, D.path as path FROM desc D WHERE (path = ?)''', [file_path])
-        
+        sql = '''SELECT
+                    D.hash AS hash, D.desc  AS description, D.path as path
+                 FROM
+                    desc D
+                 WHERE
+                    (path = ?)'''
+
+        rec = Settings.cursor.execute(sql, [file_path])
+
         return rec.fetchone()
 
 
@@ -265,8 +284,8 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
 
             # Add descriptin to the line
             if matched:
-                print('{0:s}{2:s}{1:s}'.format(line,
-                       item['description'], Settings.custom_format))
+                print('{0:s}{2:s}{1:s}{3:s}'.format(line, item['description'],
+                    Settings.custom_format_begin, Settings.custom_format_end))
                 hashes_parsed += 1
                 break
         
