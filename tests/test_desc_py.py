@@ -23,7 +23,7 @@ class TestDescPy(unittest.TestCase):
 
     def setUp(self):
         ''' Get all the default settings '''
-        settings = self.settings = desc.Settings()
+        self.settings = desc.Settings()
         self.test_description = "This is a sample description"
         self.test_path = os.path.realpath(__file__)
 
