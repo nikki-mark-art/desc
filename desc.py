@@ -42,6 +42,29 @@ class Settings:
             raise AttributeError
 
 
+def get_git_hash(file_path):
+    ''' Returns a SHA (UTF-8 bytes) hash in Git style '''
+
+    if not file_path:
+        raise Exception(LocalMessages.NO_PATH)
+
+    # Git's hash is as follows:
+    # sha1("blob " + filesize + "\0" + file_contents)
+
+    file_contents = None
+    file_path = os.path.realpath(file_path)
+
+    with open(file_path, 'rb+') as file_handle:
+        file_contents = file_handle.read()
+
+    sha1_hash = hashlib.sha1()
+    hashable = 'blob {}\0'.format(len(file_contents)).encode('UTF-8')
+    sha1_hash.update(hashable)
+    sha1_hash.update(file_contents)
+    
+    return sha1_hash.hexdigest().encode('UTF-8')
+
+
 def get_existing(file_path, file_hash=None):
     """ Check if this hash is already in the db """
 
@@ -138,7 +161,7 @@ class FileRecord(object):
 class LocalMessages(set):
     """ All predefined errors, warnings, etc. """
 
-    NO_PATH = u"No such file or directory. A typo?"
+    NO_PATH = u"No such file or directory."
     NO_FILENAME = u"Can't create a record for file without a path."
     BAD_PARAMS = u"Incorrect parameter(s) passed in."
     NEITHER_HASH_PATH_PROVIDED = u"Neither hash nor path provided."

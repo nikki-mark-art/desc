@@ -111,6 +111,27 @@ class TestDescPy(unittest.TestCase):
         self.assertEqual(hashes[0]['hash'], file_hash.hexdigest())
 
 
+    def test_get_git_hash(self):
+        '''
+        Needs `git` installed. Tests if the module get_git_hash() returns the
+        same hash as Git itself does
+        '''
+
+        import subprocess
+
+        path = os.pardir + os.path.sep + 'desc.py'
+        cmd = ['git', 'hash-object', path]
+
+        proc = subprocess.Popen(cmd,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        out, err = proc.communicate()
+
+        hash_left = out.decode('UTF-8').strip(os.linesep)
+        hash_right = desc.get_git_hash(path).decode('UTF-8').strip(os.linesep)
+        self.assertEqual(hash_left, hash_right)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=0)
 
