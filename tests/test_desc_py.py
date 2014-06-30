@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 
-'''
-
-Test desc.py with unittest
+''' Test desc.py with unittest
 
 To run tests:
 > python3 test_desc_py.py
 
+
+Tests that need to be added:
+----------------------------
+[-] Test other shells / terminals
+[-] Test Unicode file names
+[-] Test moving files around
+[-] Test copying files
+[-] Test files with the same inode on different devices
+[-] Test description of a single item
+[-] Test description for "." and ".." aliases
+[-] Test that colored output doesn't mess with the rest of the colors
+[-] Test that a file name has been updated in the database when file is
+    determined to be moved
+[-] Test globs in file names to get description
 '''
 
 import os
@@ -15,7 +27,6 @@ import unittest
 
 # Import from parent dir
 sys.path.insert(0, os.path.realpath(os.pardir))
-
 import desc
 
 
@@ -111,27 +122,5 @@ class TestDescPy(unittest.TestCase):
         self.assertEqual(hashes[0]['hash'], file_hash.hexdigest())
 
 
-    def test_get_git_hash(self):
-        '''
-        Needs `git` installed. Tests if the module get_git_hash() returns the
-        same hash as Git itself does
-        '''
-
-        import subprocess
-
-        path = os.pardir + os.path.sep + 'desc.py'
-        cmd = ['git', 'hash-object', path]
-
-        proc = subprocess.Popen(cmd,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        out, err = proc.communicate()
-
-        hash_left = out.decode('UTF-8').strip(os.linesep)
-        hash_right = desc.get_git_hash(path).decode('UTF-8').strip(os.linesep)
-        self.assertEqual(hash_left, hash_right)
-
-
 if __name__ == '__main__':
     unittest.main(verbosity=0)
-

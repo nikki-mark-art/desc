@@ -7,6 +7,7 @@ import hashlib
 import logging
 import sqlite3
 import re
+import stat
 
 
 class Colors:
@@ -42,27 +43,23 @@ class Settings:
             raise AttributeError
 
 
-def get_git_hash(file_path):
-    ''' Returns a SHA (UTF-8 bytes) hash in Git style '''
+def get_hash(file_path):
+    """ Returns a SHA (UTF-8 bytes) hash of the {inode, device} pair. """
 
     if not file_path:
         raise Exception(LocalMessages.NO_PATH)
 
-    # Git's hash is as follows:
-    # sha1("blob " + filesize + "\0" + file_contents)
-
-    file_contents = None
     file_path = os.path.realpath(file_path)
-
-    with open(file_path, 'rb+') as file_handle:
-        file_contents = file_handle.read()
+    file_inode = os.stat(file_path).st_ino
+    file_device = os.stat(file_path).st_dev
 
     sha1_hash = hashlib.sha1()
-    hashable = 'blob {}\0'.format(len(file_contents)).encode('UTF-8')
+    hashable = '{}:{}'.format(file_inode, file_device).encode('UTF-8')
     sha1_hash.update(hashable)
-    sha1_hash.update(file_contents)
-    
-    return sha1_hash.hexdigest().encode('UTF-8')
+
+    #logging.debug(file_path, "'s hash is", sha1_hash.hexdigest())
+
+    return sha1_hash.hexdigest()
 
 
 def get_existing(file_path, file_hash=None):
@@ -72,7 +69,7 @@ def get_existing(file_path, file_hash=None):
         raise Exception(LocalMessages.NEITHER_HASH_PATH_PROVIDED)
 
     elif file_hash:
-        logging.debug("Looking for record with hash {0}".format(file_hash))
+        logging.debug("Looking for record by hash {0}".format(file_hash))
 
         rec = Settings.cursor.execute('''SELECT path FROM desc
                   WHERE (hash = ?)''', [file_hash])
@@ -80,8 +77,8 @@ def get_existing(file_path, file_hash=None):
             if rec.fetchone():
                 # Already have a record
                 print(LocalMessages.RECORD_EXISTS)
-                rem = Settings.cursor.execute('''DELETE FROM desc
-                      WHERE (hash = ?)''', [file_hash])
+                rem = Settings.cursor.execute(
+                    '''DELETE FROM desc WHERE (hash = ?)''', [file_hash])
 
         except:
             print(LocalMessages.COULDNT_REMOVE_EXISTING)
@@ -89,21 +86,26 @@ def get_existing(file_path, file_hash=None):
     else:
         logging.debug("Looking for record by path {0}".format(file_path))
 
+        # Obtain the hash of the file in question
+        file_hash = get_hash(file_path)
+        logging.debug("--> hash is {}".format(file_hash))
+
         sql = '''SELECT
-                    D.hash AS hash, D.desc  AS description, D.path as path
+                    D.hash as hash, D.desc AS description, D.path as path
                  FROM
                     desc D
                  WHERE
-                    (path = ?)'''
+                    (D.hash = ?)'''
 
-        rec = Settings.cursor.execute(sql, [file_path])
+        rec = Settings.cursor.execute(sql, [file_hash])
 
         return rec.fetchone()
 
 
 def dict_factory(cursor, row):
     """ A helper for retriving column names from DB as per
-        https://docs.python.org/3.4/library/sqlite3.html#sqlite3.Connection.row_factory """
+    https://docs.python.org/3.4/library/sqlite3.html#sqlite3.Connection.row_factory
+    """
 
     d = {}
     for idx, col in enumerate(cursor.description):
@@ -123,8 +125,9 @@ class FileRecord(object):
         print("Adding a new record...", end=' ')
 
         # Insert a row of data
-        Settings.cursor.execute('''INSERT INTO desc
-            VALUES (?, ?, ?, strftime('%s', 'now'))''', [file_hash, file_path, file_desc])
+        Settings.cursor.execute(
+            '''INSERT INTO desc VALUES (?, ?, ?, strftime('%s', 'now'))''',
+            [file_hash, file_path, file_desc])
 
         try:
             # Save the changes
@@ -148,11 +151,11 @@ class FileRecord(object):
         self.file_path = file_path
         self.file_desc = file_desc
 
-        # Get a SHA512 hash of the path
-        self.file_hash = hashlib.sha512(file_path.encode('UTF-8')).hexdigest()
+        # Get a SGit hash of the file
+        self.file_hash = get_hash(file_path)
 
-        logging.debug("{0}, {1}, {2}".format(self.file_path, self.file_hash,
-                                             self.file_desc))
+        logging.debug("{0}, {1}, {2}".format(self.file_path,
+                                             self.file_hash, self.file_desc))
 
         # Pass on to saving the record
         self._store_record(self.file_path, self.file_hash, self.file_desc)
@@ -181,10 +184,10 @@ def init_logs():
     """ Initiates local message logging """
 
     logging.basicConfig(format='[%(asctime)s][%(levelname)s] %(message)s',
-                        datefmt='%m/%d/%Y %I:%M:%S %p', filename=sys.argv[0] + '.log',
-                        filemode='w+', level=logging.DEBUG)
-    
-    # logging.basicConfig(level=logging.DEBUG)
+                        datefmt='%m/%d/%Y %I:%M:%S %p', filename=sys.argv[0] +
+                        '.log', filemode='w+', level=logging.DEBUG)
+
+    #logging.basicConfig(level=logging.DEBUG)
     logging.info("-" * 8 + " Logging started " + "-" * 8)
     logging.debug("Self-test: this is a debug level messsage")
     logging.info("Self-test: this is an informational message")
@@ -259,11 +262,12 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
     if (stdin):
         # Read STDIN
         output = stdin.buffer.readlines()
-        
+
     else:
         # Start listing using system command
-        proc = subprocess.Popen([Settings.list_command, Settings.list_command_opts, folder],
-                                shell=False, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        proc = subprocess.Popen(
+            [Settings.list_command, Settings.list_command_opts, folder],
+            shell=False, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         out, err = proc.communicate()
         output = out.decode('UTF-8').split(os.linesep)
@@ -289,34 +293,44 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
 
         # Parse each line of `ls` output
         # to see if our file is in there
-        for item in hashes:
+        for existing_item in hashes:
 
             # Mini-guard against None's in hashes
-            if not item:
+            if not existing_item:
                 continue
 
-            # File name from the DB/hashes
-            file_name = item['path'].split(os.path.sep)[-1:][0]
+            logging.debug("Looking for matching hash {} in {}".format(
+                existing_item['hash'], line))
 
-            logging.debug("Looking for {} in {}".format(file_name, line))
-
-            # Check the output line against our file name
+            # Extract the file name from the input stream by assuming that
+            # the sought file is the last item in line, right after the last
+            # set of whitespace chars.
             # Warning: the regex is a little cheesy... What about Unicode?
-            matched = re.search(u'[\s]+{}$'.format(file_name),
-                                line, re.U)
+            nameMatched = re.search(u'^.*[\s\t]+(.*)$', line, re.U)
 
-            # Add descriptin to the line
+            logging.debug("Regex match:" + nameMatched.groups()[0])
+
+            if nameMatched and nameMatched.groups()[0] in os.listdir(folder):
+                file_name = nameMatched.groups()[0].strip()
+                file_path = folder + os.sep + file_name
+                file_hash = get_hash(file_path)
+
+                if file_hash == existing_item['hash']:
+                    matched = True
+
+            # Add description to the line
             if matched:
-                print('{0:s}{2:s}{1:s}{3:s}'.format(line, item['description'],
+                print('{0:s}{2:s}{1:s}{3:s}'.format(
+                    line, existing_item['description'],
                     Settings.custom_format_begin, Settings.custom_format_end))
+
                 hashes_parsed += 1
                 break
-        
+
         # Don't add description to the line
-        # (pass thru, essentially)  
+        # (pass thru, essentially)
         if not matched:
             print(line)
-
 
 
 def get_descriptions(folder=os.getcwd()):
@@ -332,7 +346,7 @@ def get_descriptions(folder=os.getcwd()):
     # Get description for each file in the dir
     for file_name in dir_files:
         file_path = ''.join([folder, os.path.sep, file_name])
-        logging.debug("Looking at: " + file_path)
+        logging.debug("get_descriptions(): Looking at " + file_path)
         fetched_record = get_existing(file_path)
         if fetched_record:
             hashes.append(fetched_record)
@@ -350,8 +364,9 @@ def main():
 
         if '-' == sys.argv[1] and sys.argv[2]:
             # Process STDIN
-            print_descriptions(
-                get_descriptions(folder=sys.argv[2]), folder=sys.argv[2], stdin=sys.stdin)
+            description = get_descriptions(folder=sys.argv[2])
+            print_descriptions(description, folder=sys.argv[2], stdin=sys.stdin)
+
         else:
             # Run adding new records
             store_description(sys.argv[1], sys.argv[2])
@@ -362,7 +377,7 @@ def main():
 
     else:
         print_descriptions(get_descriptions())
-        
+
         ## Show help
         #print_usage(LocalMessages.BAD_PARAMS)
 
@@ -372,4 +387,3 @@ def main():
 # Entry point
 if '__main__' == __name__:
     main()
-
