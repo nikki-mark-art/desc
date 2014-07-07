@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
 import os
+import stat
 import sys
 import subprocess
 import hashlib
 import logging
 import sqlite3
 import re
-import stat
+import time
+import argparse
 
 
 class Colors:
@@ -31,6 +33,7 @@ class Settings:
     custom_format_end = Colors.ENDC
     app_home = os.path.realpath(os.environ['HOME'] + os.path.sep +
                                 '.desc' + os.path.sep)
+    expired_symbol = Colors.BOLD + 'x ' + Colors.ENDC
 
     db_uri = app_home + os.path.sep + '.db'  # where to store the DB
     cursor = None  # internal use, overwritten
@@ -71,8 +74,16 @@ def get_existing(file_path, file_hash=None):
     elif file_hash:
         logging.debug("Looking for record by hash {0}".format(file_hash))
 
-        rec = Settings.cursor.execute('''SELECT path FROM desc
-                  WHERE (hash = ?)''', [file_hash])
+        sql = '''
+                SELECT
+                    D.path, D.ctime, D.desc
+                FROM
+                    desc D
+                WHERE
+                    (hash = ?)'''
+
+        rec = Settings.cursor.execute(sql, [file_hash])
+
         try:
             if rec.fetchone():
                 # Already have a record
@@ -91,7 +102,10 @@ def get_existing(file_path, file_hash=None):
         logging.debug("--> hash is {}".format(file_hash))
 
         sql = '''SELECT
-                    D.hash as hash, D.desc AS description, D.path as path
+                    D.hash AS hash,
+                    D.desc AS description,
+                    D.path AS path,
+                    D.ctime AS ctime
                  FROM
                     desc D
                  WHERE
@@ -121,13 +135,14 @@ class FileRecord(object):
 
         # See if we need to remove/update an existing entry
         get_existing(file_path, file_hash)
+        file_ctime = os.stat(file_path).st_ctime
 
         print("Adding a new record...", end=' ')
 
         # Insert a row of data
         Settings.cursor.execute(
-            '''INSERT INTO desc VALUES (?, ?, ?, strftime('%s', 'now'))''',
-            [file_hash, file_path, file_desc])
+            '''INSERT INTO desc VALUES (?, ?, ?, ?)''',
+            [file_hash, file_path, file_desc, file_ctime])
 
         try:
             # Save the changes
@@ -205,7 +220,7 @@ def init_db():
 
     # Create table if not exists
     db.execute('''CREATE TABLE IF NOT EXISTS desc
-                     (hash text, path text, desc blob, added date)''')
+                     (hash text, path text, desc blob, ctime text)''')
     db.commit()
     logging.debug("Set up the DB file location")
 
@@ -253,13 +268,11 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
 
     logging.debug("Printing listing of the {} folder".format(folder))
 
-    list_command = Settings.list_command
     folder = os.path.realpath(folder)
     hashes_parsed = 0
     hashes_len = len(hashes)
-    output = None
 
-    if (stdin):
+    if stdin:
         # Read STDIN
         output = stdin.buffer.readlines()
 
@@ -276,7 +289,7 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
     # (i.e. in the default `ls` mode)
     for line in output:
 
-        if (stdin):
+        if stdin:
             line = line.decode('UTF-8').strip(os.linesep)
 
         # Whether to print the output from `ls`
@@ -305,14 +318,16 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
             # Extract the file name from the input stream by assuming that
             # the sought file is the last item in line, right after the last
             # set of whitespace chars.
-            # Warning: the regex is a little cheesy... What about Unicode?
-            nameMatched = re.search(u'^.*[\s\t]+(.*)$', line, re.U)
+            nameMatched = re.search(u'^(.*[\s\t]+)?(.*)$', line, re.U)
 
-            logging.debug("Regex match:" + nameMatched.groups()[0])
+            # Get the last or the only group
+            candidate = nameMatched.groups()[-1:][0]
 
-            if nameMatched and nameMatched.groups()[0] in os.listdir(folder):
-                file_name = nameMatched.groups()[0].strip()
+            if nameMatched and candidate in os.listdir(folder):
+                logging.debug("Regex match:" + candidate)
+                file_name = candidate.strip()
                 file_path = folder + os.sep + file_name
+                file_ctime = os.stat(file_path).st_ctime
                 file_hash = get_hash(file_path)
 
                 if file_hash == existing_item['hash']:
@@ -320,9 +335,22 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
 
             # Add description to the line
             if matched:
-                print('{0:s}{2:s}{1:s}{3:s}'.format(
-                    line, existing_item['description'],
-                    Settings.custom_format_begin, Settings.custom_format_end))
+
+                expired = False
+                expired_mark = Settings.expired_symbol
+
+                # Behave differently if ctime has changed
+                if int(float(file_ctime)) == int(float(existing_item['ctime'])):
+                    expired_mark = ''
+                else:
+                    expired = True
+
+                if expired and not Settings.cli_args.show_expired:
+                    print(line)
+                else:
+                    print('{0:s}{1:s}{2:s}{3:s}{4:s}'.format(
+                        line, Settings.custom_format_begin, expired_mark,
+                        existing_item['description'], Settings.custom_format_end))
 
                 hashes_parsed += 1
                 break
@@ -335,7 +363,7 @@ def print_descriptions(hashes, folder=os.getcwd(), stdin=None):
 
 def get_descriptions(folder=os.getcwd()):
     """ Returns a dictionary with filename as the key
-        and its description as value """
+        and description as its value """
 
     hashes = []
     folder = os.path.realpath(folder)
@@ -348,10 +376,53 @@ def get_descriptions(folder=os.getcwd()):
         file_path = ''.join([folder, os.path.sep, file_name])
         logging.debug("get_descriptions(): Looking at " + file_path)
         fetched_record = get_existing(file_path)
+
         if fetched_record:
             hashes.append(fetched_record)
 
     return hashes
+
+
+def init_argparser():
+    """ Parse command line options """
+
+    parser = argparse.ArgumentParser(description='Describe files')
+    group = parser.add_mutually_exclusive_group()
+
+    # File or folder path
+    group.add_argument('path', default='.', nargs='?',
+                        help="File or folder path to operate on")
+
+    # A list of files (e.g. from a glob)
+    group.add_argument('-l', '--list', dest='file_list', nargs='+',
+                        help="List of files to operate on")
+
+    # Message / description
+    parser.add_argument('-m', '--message', default=None, nargs='?',
+                        help="Text to desribe the file or folder")
+
+    # Read from STDIN
+    parser.add_argument('-', '--stdin', action='store_true',
+                        help="Read from standard input")
+
+    # Show stale records
+    parser.add_argument('-e', '--expired',
+                        dest='show_expired', default=False, action='store_true',
+                        help="show expired items (check ctime)")
+
+    # Parse
+    args = parser.parse_args()
+    
+    return args
+
+
+def leave():
+    """ Plausible point of leaving """
+
+    # (A)lways (B)e (C)losing
+    shutdown_db()
+
+    sys.exit(0)
 
 
 def main():
@@ -360,30 +431,73 @@ def main():
     init_logs()
     init_db()
 
-    if 3 == len(sys.argv):
+    # Parse command line args
+    args = init_argparser()
 
-        if '-' == sys.argv[1] and sys.argv[2]:
-            # Process STDIN
-            description = get_descriptions(folder=sys.argv[2])
-            print_descriptions(description, folder=sys.argv[2], stdin=sys.stdin)
+    # Convert params to strings from lists
+    args.path = ''.join(args.path)
 
+    # Export to Settings for access in the other funcs
+    Settings.cli_args = args
+
+    logging.debug("Command line arguments: {}".format(args))
+
+    if args.stdin:
+        # Process STDIN
+        description = get_descriptions(folder=args.path)
+        print_descriptions(description, folder=args.path, stdin=sys.stdin)
+        leave()
+
+    # Empty messages won't get here
+    if args.message:
+        
+        # Run adding new records
+        if args.file_list:
+            for path in args.file_list:
+                store_description(path, args.message)
         else:
-            # Run adding new records
-            store_description(sys.argv[1], sys.argv[2])
+            store_description(args.path, args.message)
 
-    elif 2 == len(sys.argv):
-        print_descriptions(
-            get_descriptions(folder=sys.argv[1]), folder=sys.argv[1])
+        leave()
 
-    else:
-        print_descriptions(get_descriptions())
+    print_descriptions(get_descriptions(folder=args.path), folder=args.path)
 
-        ## Show help
-        #print_usage(LocalMessages.BAD_PARAMS)
-
-    # (A)lways (B)e (C)losing
-    shutdown_db()
+    leave()
 
 # Entry point
 if '__main__' == __name__:
     main()
+
+""" Notes
+
+*   Although the word "description" appears in the source code, it should be
+    treated as a metadata term and, of course, the message next to the file
+    name in the list doesn't have to describe the nature of it.
+
+
+
+Options described
+
+------------------------------------------------------------------------------
+
+        -m     Message / description
+
+               Example: $ desc -l *.bak -m "My back-ups"
+
+               Adds description "My back-ups" (without the qoutes) to all the
+               files specified by the glob `*.bak`
+
+------------------------------------------------------------------------------
+
+        -      Read from stdin
+
+               Example: $ ls -la /tmp | desc /tmp -
+
+               Will try to parse the output of the `ls -la` command relatively
+               to the /tmp folder specified by `/tmp`. If folder is not
+               provided with `-` which reads from stdin then the program will
+               emit an error
+
+------------------------------------------------------------------------------
+
+"""
